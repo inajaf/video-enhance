@@ -9,6 +9,10 @@ The app is a Go server with embedded HTML/CSS/JS. It runs enhancement jobs throu
 - `ffmpeg` for fast cleanup, denoise, sharpen, resize, audio preservation, and re-encoding.
 - `realesrgan-ncnn-vulkan` for AI upscaling modes.
 
+## Usage Demo
+
+![Video Enhance usage demo](docs/images/video-enhance-usage.gif)
+
 ## Requirements
 
 - macOS, Linux, or Windows capable of running Go and FFmpeg.
