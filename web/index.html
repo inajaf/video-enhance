@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video Enhance</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Video Enhance</h1>
+        <p class="subtitle">Local video cleanup and AI upscaling</p>
+      </div>
+      <div class="status-strip" id="statusStrip" aria-live="polite"></div>
+    </header>
+
+    <main class="app-shell">
+      <section class="panel control-panel" aria-labelledby="newJobTitle">
+        <div class="panel-head">
+          <div>
+            <h2 id="newJobTitle">New Job</h2>
+            <p>Choose source, mode, and output.</p>
+          </div>
+          <button class="icon-button" id="refreshHealth" type="button" aria-label="Refresh tool status" title="Refresh tool status">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12a9 9 0 0 1-15.3 6.4M3 12A9 9 0 0 1 18.3 5.6"/>
+              <path d="M21 5v7h-7M3 19v-7h7"/>
+            </svg>
+          </button>
+        </div>
+
+        <form id="jobForm" class="job-form">
+          <label class="drop-zone" id="dropZone">
+            <input id="videoInput" name="video" type="file" accept="video/*" required>
+            <span class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3v12"/>
+                <path d="m7 8 5-5 5 5"/>
+                <path d="M5 15v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/>
+              </svg>
+            </span>
+            <span class="drop-title" id="fileTitle">Select video</span>
+            <span class="drop-meta" id="fileMeta">MP4, MOV, MKV, WebM</span>
+          </label>
+
+          <fieldset>
+            <legend>Mode</legend>
+            <div class="segmented segmented-grid">
+              <label>
+                <input type="radio" name="mode" value="fast" checked>
+                <span>Clean</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="fast-upscale">
+                <span>Clean 2x</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="ai-2x">
+                <span>AI 2x</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="ai-4x">
+                <span>AI 4x</span>
+              </label>
+              <label>
+                <input type="radio" name="mode" value="anime">
+                <span>Anime</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Preset</legend>
+            <div class="segmented">
+              <label>
+                <input type="radio" name="preset" value="fast">
+                <span>Fast</span>
+              </label>
+              <label>
+                <input type="radio" name="preset" value="balanced" checked>
+                <span>Balanced</span>
+              </label>
+              <label>
+                <input type="radio" name="preset" value="best">
+                <span>Best</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Format</span>
+              <select name="format" id="formatSelect">
+                <option value="mp4">MP4</option>
+                <option value="mov">MOV</option>
+                <option value="mkv">MKV</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Output folder</span>
+              <input name="outputDir" id="outputDir" type="text" placeholder="outputs">
+            </label>
+          </div>
+
+          <div class="resource-card" id="resourceHint" aria-live="polite">
+            <div class="resource-head">
+              <span id="resourceTitle">Resource use</span>
+              <strong id="resourceLevel">Medium</strong>
+            </div>
+            <p id="resourceSummary">FFmpeg processing can use most available CPU while the job is running.</p>
+            <dl class="resource-grid">
+              <div>
+                <dt>CPU</dt>
+                <dd id="resourceCPU">High during filters and encoding</dd>
+              </div>
+              <div>
+                <dt>GPU</dt>
+                <dd id="resourceGPU">Low; hardware encoder may be used</dd>
+              </div>
+              <div>
+                <dt>Disk</dt>
+                <dd id="resourceDisk">Low temporary usage</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="actions">
+            <button class="primary-button" id="startButton" type="submit">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m8 5 11 7-11 7Z"/>
+              </svg>
+              Start
+            </button>
+            <button class="secondary-button" id="cancelButton" type="button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 6h12v12H6z"/>
+              </svg>
+              Cancel
+            </button>
+          </div>
+        </form>
+
+        <div class="tool-list" id="toolList" aria-label="Tool status"></div>
+      </section>
+
+      <section class="workspace">
+        <section class="panel progress-panel" aria-labelledby="progressTitle">
+          <div class="panel-head">
+            <div>
+              <h2 id="progressTitle">Current Job</h2>
+              <p id="currentJobMeta">No job running</p>
+            </div>
+            <a class="download-link is-hidden" id="downloadLink" href="#">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v12"/>
+                <path d="m7 10 5 5 5-5"/>
+                <path d="M5 21h14"/>
+              </svg>
+              Download
+            </a>
+          </div>
+
+          <div class="progress-block">
+            <div class="progress-info">
+              <span id="stageText">Idle</span>
+              <span id="progressText">0%</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+          </div>
+
+          <div class="job-output">
+            <span class="label">Output</span>
+            <code id="outputPath">-</code>
+          </div>
+        </section>
+
+        <section class="panel jobs-panel" aria-labelledby="jobsTitle">
+          <div class="panel-head">
+            <div>
+              <h2 id="jobsTitle">Jobs</h2>
+              <p id="jobCount">0 total</p>
+            </div>
+          </div>
+          <div class="job-list" id="jobList"></div>
+        </section>
+
+        <section class="panel log-panel" aria-labelledby="logTitle">
+          <div class="panel-head">
+            <div>
+              <h2 id="logTitle">Log</h2>
+              <p id="logMeta">No output</p>
+            </div>
+          </div>
+          <pre id="logOutput" tabindex="0"></pre>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

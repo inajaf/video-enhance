@@ -1,0 +1,21 @@
+.DS_Store
+
+# Runtime data
+/jobs/
+/outputs/
+.server.log
+.server.pid
+
+# Optional downloaded tools and local binaries
+/tools/*
+!/tools/.gitkeep
+/bin/
+
+# Build output
+/dist/
+/video-enhance
+
+# Editor and env files
+.env
+.idea/
+.vscode/
