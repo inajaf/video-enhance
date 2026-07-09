@@ -104,7 +104,25 @@ func isAIMode(mode string) bool {
 	return strings.HasPrefix(mode, "ai-") || mode == "anime"
 }
 
-func (s *Server) prepareOutput(id, suffix string) (string, string, error) {
+// outputNameToken is the only abbreviation appended to the sanitized source base name.
+const outputNameToken = "upscale"
+
+// buildOutputFilename keeps the input video's sanitized base name and appends only
+// the fixed "upscale" abbreviation (plus an optional short collision id).
+// Mode and preset never appear in the filename.
+func buildOutputFilename(inputName, format, collisionID string) string {
+	base := strings.TrimSuffix(sanitizeFilename(inputName), filepath.Ext(inputName))
+	if base == "" {
+		base = "enhanced"
+	}
+	format = normalizeFormat(format)
+	if collisionID != "" {
+		return fmt.Sprintf("%s-%s-%s.%s", base, outputNameToken, collisionID, format)
+	}
+	return fmt.Sprintf("%s-%s.%s", base, outputNameToken, format)
+}
+
+func (s *Server) prepareOutput(id string) (string, string, error) {
 	s.mu.Lock()
 	job := s.jobs[id]
 	inputName := job.InputName
@@ -120,14 +138,10 @@ func (s *Server) prepareOutput(id, suffix string) (string, string, error) {
 		return "", "", err
 	}
 
-	base := strings.TrimSuffix(sanitizeFilename(inputName), filepath.Ext(inputName))
-	if base == "" {
-		base = "enhanced"
-	}
-	name := fmt.Sprintf("%s-%s.%s", base, suffix, format)
+	name := buildOutputFilename(inputName, format, "")
 	outputPath := filepath.Join(outputDir, name)
 	if _, err := os.Stat(outputPath); err == nil {
-		name = fmt.Sprintf("%s-%s-%s.%s", base, suffix, idSuffix(id), format)
+		name = buildOutputFilename(inputName, format, idSuffix(id))
 		outputPath = filepath.Join(outputDir, name)
 	}
 
@@ -146,7 +160,7 @@ func (s *Server) runFast(ctx context.Context, id string) error {
 	}
 
 	job := s.pipelineJob(id)
-	outputPath, _, err := s.prepareOutput(id, job.mode+"-"+job.preset)
+	outputPath, _, err := s.prepareOutput(id)
 	if err != nil {
 		return err
 	}
@@ -265,7 +279,7 @@ func aiOptionsForMode(mode string) aiOptions {
 }
 
 func (s *Server) prepareAIPaths(id string, job pipelineJob) (aiJobPaths, error) {
-	outputPath, _, err := s.prepareOutput(id, fmt.Sprintf("%s-%s", job.mode, job.preset))
+	outputPath, _, err := s.prepareOutput(id)
 	if err != nil {
 		return aiJobPaths{}, err
 	}

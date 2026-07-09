@@ -5,9 +5,143 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestBuildOutputFilename(t *testing.T) {
+	t.Parallel()
+
+	// Naming must keep the sanitized source base and only the fixed "upscale"
+	// abbreviation, independent of enhancement mode or quality preset.
+	modes := []string{"fast", "fast-upscale", "ai-2x", "ai-4x", "anime"}
+	presets := []string{"fast", "balanced", "best"}
+	forbidden := []string{"fast-upscale", "ai-2x", "ai-4x", "balanced", "best", "anime"}
+
+	for _, mode := range modes {
+		for _, preset := range presets {
+			t.Run(mode+"/"+preset, func(t *testing.T) {
+				t.Parallel()
+
+				// Mode/preset are intentionally unused for the filename; only
+				// input base + format matter. Looping them documents the contract.
+				_ = mode
+				_ = preset
+
+				got := buildOutputFilename("My Clip.mp4", "mp4", "")
+				want := "My Clip-upscale.mp4"
+				if got != want {
+					t.Fatalf("buildOutputFilename() = %q, want %q", got, want)
+				}
+				for _, token := range forbidden {
+					if token == "upscale" {
+						continue
+					}
+					// Mode/preset tokens must not appear as name segments.
+					if containsNameToken(got, token) {
+						t.Fatalf("output name %q must not contain mode/preset token %q", got, token)
+					}
+				}
+			})
+		}
+	}
+
+	if got := buildOutputFilename("clip.mp4", "MOV", ""); got != "clip-upscale.mov" {
+		t.Fatalf("format normalize = %q, want clip-upscale.mov", got)
+	}
+	if got := buildOutputFilename("../path/How_Google.mp4", "mp4", ""); got != "How_Google-upscale.mp4" {
+		t.Fatalf("sanitized base = %q, want How_Google-upscale.mp4", got)
+	}
+	if got := buildOutputFilename("clip.mp4", "mp4", "9c208fe5"); got != "clip-upscale-9c208fe5.mp4" {
+		t.Fatalf("collision = %q, want clip-upscale-9c208fe5.mp4", got)
+	}
+	if got := buildOutputFilename("clip.mp4", "mp4", "9c208fe5"); containsNameToken(got, "fast-upscale") || containsNameToken(got, "best") {
+		t.Fatalf("collision name %q must omit mode/preset tokens", got)
+	}
+	if got := buildOutputFilename(" . ", "webm", ""); got != "enhanced-upscale.mp4" {
+		t.Fatalf("empty base fallback = %q, want enhanced-upscale.mp4", got)
+	}
+}
+
+func TestPrepareOutputUsesUpscaleAbbreviation(t *testing.T) {
+	t.Parallel()
+
+	outDir := t.TempDir()
+	server := NewServer(Config{WorkDir: t.TempDir(), OutputDir: outDir}, nil)
+
+	jobID := "job-abcdefgh"
+	server.mu.Lock()
+	server.jobs[jobID] = &Job{
+		ID:           jobID,
+		InputName:    "How_Google_Keeps_the_Internet_Running.mp4",
+		Mode:         "fast-upscale",
+		Preset:       "best",
+		Format:       "mp4",
+		requestedDir: outDir,
+	}
+	server.mu.Unlock()
+
+	path, name, err := server.prepareOutput(jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantName := "How_Google_Keeps_the_Internet_Running-upscale.mp4"
+	if name != wantName {
+		t.Fatalf("prepareOutput name = %q, want %q", name, wantName)
+	}
+	if filepath.Base(path) != wantName {
+		t.Fatalf("prepareOutput path base = %q, want %q", filepath.Base(path), wantName)
+	}
+	for _, token := range []string{"fast-upscale", "best", "ai-2x", "balanced"} {
+		if containsNameToken(name, token) {
+			t.Fatalf("name %q must not contain %q", name, token)
+		}
+	}
+
+	// Collision: existing file forces short id disambiguator, still no mode tokens.
+	if err := os.WriteFile(path, []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path2, name2, err := server.prepareOutput(jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCollision := "How_Google_Keeps_the_Internet_Running-upscale-abcdefgh.mp4"
+	if name2 != wantCollision {
+		t.Fatalf("collision name = %q, want %q", name2, wantCollision)
+	}
+	if filepath.Base(path2) != wantCollision {
+		t.Fatalf("collision path base = %q, want %q", filepath.Base(path2), wantCollision)
+	}
+	for _, token := range []string{"fast-upscale", "best", "ai-2x", "balanced"} {
+		if containsNameToken(name2, token) {
+			t.Fatalf("collision name %q must not contain %q", name2, token)
+		}
+	}
+
+	server.mu.Lock()
+	snap := server.jobs[jobID].Snapshot()
+	server.mu.Unlock()
+	if snap.OutputName != wantCollision {
+		t.Fatalf("job OutputName = %q, want %q", snap.OutputName, wantCollision)
+	}
+	if snap.OutputPath != path2 {
+		t.Fatalf("job OutputPath = %q, want %q", snap.OutputPath, path2)
+	}
+}
+
+// containsNameToken reports whether token appears as a hyphen-delimited segment
+// (or the whole stem) in the basename before the extension.
+func containsNameToken(filename, token string) bool {
+	base := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+	for _, part := range strings.Split(base, "-") {
+		if part == token {
+			return true
+		}
+	}
+	return strings.Contains(base, token)
+}
 
 func TestFFmpegProgress(t *testing.T) {
 	t.Parallel()
