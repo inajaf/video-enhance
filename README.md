@@ -22,16 +22,43 @@ The app is a Go server with embedded HTML/CSS/JS. It runs enhancement jobs throu
 
 ## Quick Start
 
-Install the local tools on macOS:
+Install the local tools:
 
 ```bash
-chmod +x scripts/install-tools-macos.sh
+# macOS or Linux
+chmod +x scripts/install-tools.sh scripts/install-tools-macos.sh scripts/install-tools-linux.sh
+scripts/install-tools.sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts/install-tools-windows.ps1
+```
+
+Or run the OS-specific script directly:
+
+```bash
+# macOS
 scripts/install-tools-macos.sh
+
+# Linux
+scripts/install-tools-linux.sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts/install-tools-windows.ps1
 ```
 
 Start the app:
 
 ```bash
+go run . -open
+```
+
+On Windows PowerShell:
+
+```powershell
 go run . -open
 ```
 
@@ -56,19 +83,47 @@ Outputs are written locally. Nothing is uploaded to a remote service.
 
 ## Tool Setup
 
+macOS or Linux:
+
 ```bash
-scripts/install-tools-macos.sh
+scripts/install-tools.sh
 ```
 
-This installs `ffmpeg` with Homebrew if needed and downloads the Real-ESRGAN ncnn Vulkan macOS package into `tools/`.
+The wrapper detects the OS and runs one of these:
 
-You can also provide custom tool paths:
+```bash
+scripts/install-tools-macos.sh
+scripts/install-tools-linux.sh
+```
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-tools-windows.ps1
+```
+
+The setup scripts install or check `ffmpeg` and `ffprobe`, then download the matching Real-ESRGAN ncnn Vulkan package into `tools/realesrgan-ncnn-vulkan`.
+
+If `ffmpeg` was installed during setup, open a new terminal before starting the app so your shell refreshes `PATH`.
+
+You can also provide custom tool paths.
+
+macOS/Linux:
 
 ```bash
 export FFMPEG_BIN=/path/to/ffmpeg
 export FFPROBE_BIN=/path/to/ffprobe
 export REALESRGAN_BIN=/path/to/realesrgan-ncnn-vulkan
 export REALESRGAN_MODEL_PATH=/path/to/models
+```
+
+Windows PowerShell:
+
+```text
+$env:FFMPEG_BIN = "C:\path\to\ffmpeg.exe"
+$env:FFPROBE_BIN = "C:\path\to\ffprobe.exe"
+$env:REALESRGAN_BIN = "C:\path\to\realesrgan-ncnn-vulkan.exe"
+$env:REALESRGAN_MODEL_PATH = "C:\path\to\models"
 ```
 
 ## Modes
@@ -89,7 +144,7 @@ Exact usage depends on input resolution, duration, codec, and your machine. Thes
 
 | Mode | CPU | GPU | Disk | Notes |
 | --- | --- | --- | --- | --- |
-| `Clean` | High | Low to medium | Low | FFmpeg filters and encoding may use most available CPU threads. On macOS, hardware video encoding may use the media engine. |
+| `Clean` | High | Low to medium | Low | FFmpeg filters and encoding may use most available CPU threads. Hardware video encoding may help on supported systems. |
 | `Clean 2x` | High | Low to medium | Low | Adds CPU scaling work. Usually the fastest acceptable option for quick Shorts cleanup. |
 | `AI 2x` | Medium to high | High | High | Extracts every frame to PNG, upscales frames with Real-ESRGAN on one Vulkan GPU by default, then rebuilds the video. Temporary frames can use gigabytes. |
 | `AI 4x` | Medium to high | Very high | Very high | Slowest and heaviest option. Best for short clips or low-resolution sources when you can wait. |
@@ -115,6 +170,12 @@ To force Real-ESRGAN TTA for short clips or tests:
 export REALESRGAN_TTA=1
 ```
 
+On Windows PowerShell:
+
+```powershell
+$env:REALESRGAN_TTA = "1"
+```
+
 ## Output
 
 By default, finished videos are written to `outputs/`. The web UI has an output folder field; relative paths are resolved from the project folder, and `~/` is expanded to your home folder.
@@ -133,6 +194,13 @@ Run the binary:
 ./dist/video-enhance -open
 ```
 
+On Windows, build and run:
+
+```powershell
+go build -o dist/video-enhance.exe .
+.\dist\video-enhance.exe -open
+```
+
 To use a different address or port:
 
 ```bash
@@ -145,6 +213,14 @@ Format, lint, and test the project:
 
 ```bash
 make check
+```
+
+Without `make`, run the checks directly:
+
+```bash
+go fmt ./...
+go tool golangci-lint run ./...
+go test ./...
 ```
 
 Useful individual targets:

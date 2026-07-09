@@ -41,7 +41,7 @@ func health() HealthResponse {
 				Required: true,
 				Message:  "Required for every enhancement mode.",
 				Version:  ffmpegVersion,
-				Install:  "macOS: brew install ffmpeg",
+				Install:  "Run the setup script for your OS, or install ffmpeg and ensure it is on PATH.",
 			},
 			{
 				Name:     "ffprobe",
@@ -59,7 +59,7 @@ func health() HealthResponse {
 				Required: false,
 				Message:  "Required for AI upscale and anime modes.",
 				Version:  realVersion,
-				Install:  "Run scripts/install-tools-macos.sh or set REALESRGAN_BIN.",
+				Install:  "Run the setup script for your OS, or set REALESRGAN_BIN.",
 			},
 		},
 	}
@@ -83,19 +83,33 @@ func findExecutable(name, envName string, candidates ...string) string {
 }
 
 func localToolCandidates(name string) []string {
-	return []string{
+	candidates := []string{
 		filepath.Join("tools", name),
 		filepath.Join("bin", name),
 		filepath.Join(".", name),
 	}
+	if !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		exeName := name + ".exe"
+		candidates = append(candidates,
+			filepath.Join("tools", exeName),
+			filepath.Join("bin", exeName),
+			filepath.Join(".", exeName),
+		)
+	}
+	return candidates
 }
 
 func realESRGANCandidates() []string {
 	return []string{
+		filepath.Join("tools", "realesrgan-ncnn-vulkan", "realesrgan-ncnn-vulkan.exe"),
+		filepath.Join("tools", "realesrgan-ncnn-vulkan-20220424-windows", "realesrgan-ncnn-vulkan.exe"),
 		filepath.Join("tools", "realesrgan-ncnn-vulkan", "realesrgan-ncnn-vulkan"),
 		filepath.Join("tools", "realesrgan-ncnn-vulkan-20220424-macos", "realesrgan-ncnn-vulkan"),
+		filepath.Join("tools", "realesrgan-ncnn-vulkan-20220424-ubuntu", "realesrgan-ncnn-vulkan"),
 		filepath.Join("bin", "realesrgan-ncnn-vulkan"),
+		filepath.Join("bin", "realesrgan-ncnn-vulkan.exe"),
 		filepath.Join(".", "realesrgan-ncnn-vulkan"),
+		filepath.Join(".", "realesrgan-ncnn-vulkan.exe"),
 	}
 }
 
