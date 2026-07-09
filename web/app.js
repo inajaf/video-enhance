@@ -286,7 +286,7 @@ function updateResourceHint() {
       level: "CPU high",
       summary: "FFmpeg denoise, sharpen, color, and encode. Fastest path, no AI frame upscaling.",
       cpu: "High; FFmpeg may use most CPU threads",
-      gpu: "Low; macOS media encoder may help",
+      gpu: "Low; hardware encoders may help on supported systems",
       disk: "Low; no frame directory"
     },
     "fast-upscale": {

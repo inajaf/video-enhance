@@ -156,7 +156,7 @@ func (s *Server) prepareOutput(id string) (string, string, error) {
 func (s *Server) runFast(ctx context.Context, id string) error {
 	tools := detectTools()
 	if tools.FFmpeg == "" {
-		return fmt.Errorf("ffmpeg is required. Install with: brew install ffmpeg")
+		return fmt.Errorf("ffmpeg is required. Run the setup script for your OS or install ffmpeg and ensure it is on PATH")
 	}
 
 	job := s.pipelineJob(id)
@@ -253,7 +253,7 @@ func (s *Server) runAI(ctx context.Context, id string) error {
 
 func validateAITools(tools tools) error {
 	if tools.FFmpeg == "" {
-		return fmt.Errorf("ffmpeg is required. Install with: brew install ffmpeg")
+		return fmt.Errorf("ffmpeg is required. Run the setup script for your OS or install ffmpeg and ensure it is on PATH")
 	}
 
 	if tools.FFprobe == "" {
@@ -261,7 +261,7 @@ func validateAITools(tools tools) error {
 	}
 
 	if tools.RealESRGAN == "" {
-		return fmt.Errorf("realesrgan-ncnn-vulkan is required for AI upscaling. Run scripts/install-tools-macos.sh or set REALESRGAN_BIN")
+		return fmt.Errorf("realesrgan-ncnn-vulkan is required for AI upscaling. Run the setup script for your OS or set REALESRGAN_BIN")
 	}
 
 	return nil
