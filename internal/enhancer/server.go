@@ -99,7 +99,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "choose a video file")
 		return
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	id := newID()
 	workDir := filepath.Join(s.config.WorkDir, id)

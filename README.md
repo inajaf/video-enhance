@@ -138,3 +138,41 @@ To use a different address or port:
 ```bash
 ./dist/video-enhance -addr 127.0.0.1:8787 -open
 ```
+
+## Code Quality
+
+Format, lint, and test the project:
+
+```bash
+make check
+```
+
+Useful individual targets:
+
+```bash
+make fmt
+make lint
+make test
+make bench
+```
+
+The linter is pinned as a Go tool in `go.mod`, so `make lint` runs the same
+`golangci-lint` version on every machine with the project Go toolchain.
+
+## Profiling
+
+Start the app with Go pprof and trace endpoints enabled:
+
+```bash
+go run . -pprof
+```
+
+Then capture profiles while a job is running:
+
+```bash
+go tool pprof http://127.0.0.1:8787/debug/pprof/profile?seconds=30
+go tool trace http://127.0.0.1:8787/debug/pprof/trace?seconds=5
+```
+
+The profiling endpoints are off by default. Only enable them during local
+debugging.
