@@ -3,9 +3,11 @@ package enhancer
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,15 +41,10 @@ func runPreparedCommand(ctx context.Context, hooks commandHooks, cmd *exec.Cmd) 
 	}
 
 	var wg sync.WaitGroup
+	readErrs := make(chan error, 2)
 	read := func(reader io.Reader) {
 		defer wg.Done()
-		scanner := bufio.NewScanner(reader)
-		scanner.Buffer(make([]byte, 1024), 1024*1024)
-		for scanner.Scan() {
-			if hooks.Line != nil {
-				hooks.Line(scanner.Text())
-			}
-		}
+		readErrs <- readCommandOutput(reader, hooks.Line)
 	}
 	wg.Add(2)
 	go read(stdout)
@@ -56,7 +53,14 @@ func runPreparedCommand(ctx context.Context, hooks commandHooks, cmd *exec.Cmd) 
 	done := make(chan error, 1)
 	go func() {
 		wg.Wait()
-		done <- cmd.Wait()
+		close(readErrs)
+
+		waitErr := cmd.Wait()
+		for err := range readErrs {
+			waitErr = errors.Join(waitErr, err)
+		}
+
+		done <- waitErr
 	}()
 
 	var ticker *time.Ticker
@@ -82,6 +86,27 @@ func runPreparedCommand(ctx context.Context, hooks commandHooks, cmd *exec.Cmd) 
 	}
 }
 
+func readCommandOutput(reader io.Reader, lineHook func(string)) error {
+	buffered := bufio.NewReader(reader)
+
+	for {
+		line, err := buffered.ReadString('\n')
+		if line != "" && lineHook != nil {
+			lineHook(strings.TrimRight(line, "\r\n"))
+		}
+
+		if err == nil {
+			continue
+		}
+
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
+		return err
+	}
+}
+
 func tickC(ticker *time.Ticker) <-chan time.Time {
 	if ticker == nil {
 		return nil
@@ -102,9 +127,24 @@ func shellQuote(value string) string {
 		return "''"
 	}
 	for _, r := range value {
-		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '/' && r != '.' && r != '-' && r != '_' && r != ':' && r != '=' && r != ',' && r != '+' && r != '%' {
+		if !isShellSafe(r) {
 			return fmt.Sprintf("%q", value)
 		}
 	}
 	return value
+}
+
+func isShellSafe(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return true
+	case r >= 'A' && r <= 'Z':
+		return true
+	case r >= '0' && r <= '9':
+		return true
+	case r == '/', r == '.', r == '-', r == '_', r == ':', r == '=', r == ',', r == '+', r == '%':
+		return true
+	default:
+		return false
+	}
 }
