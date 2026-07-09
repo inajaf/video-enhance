@@ -112,12 +112,14 @@ updateResourceHint();
 function updateSelectedFile() {
   const file = videoInput.files?.[0];
   if (!file) {
-    fileTitle.textContent = "Select video";
-    fileMeta.textContent = "MP4, MOV, MKV, WebM";
+    fileTitle.textContent = "Drop a video here";
+    fileMeta.textContent = "or click to browse - MP4, MOV, MKV, WebM";
+    dropZone.classList.remove("has-file");
     return;
   }
   fileTitle.textContent = file.name;
   fileMeta.textContent = `${formatBytes(file.size)} · ${file.type || "video"}`;
+  dropZone.classList.add("has-file");
 }
 
 async function loadHealth() {
@@ -199,7 +201,7 @@ function renderJobs() {
   const jobs = [...state.jobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   jobCount.textContent = `${jobs.length} total`;
   if (!jobs.length) {
-    jobList.innerHTML = `<div class="job-item"><div><div class="job-name">No jobs</div><div class="job-meta">Start a job to see it here.</div></div></div>`;
+    jobList.innerHTML = `<div class="job-item empty"><div><div class="job-name">No jobs yet</div><div class="job-meta">Start an enhance job to see it here.</div></div></div>`;
     return;
   }
 
@@ -235,6 +237,7 @@ function renderJob(job) {
 
   const running = job.status === "queued" || job.status === "running";
   cancelButton.disabled = !running;
+  progressFill.classList.toggle("is-active", running);
 
   if (job.status === "succeeded") {
     downloadLink.href = `/api/jobs/${job.id}/download`;
@@ -326,12 +329,21 @@ function updateResourceHint() {
     best: "Best increases quality settings. Real-ESRGAN TTA stays off unless REALESRGAN_TTA=1."
   }[preset] || "";
 
+  const levelKey = {
+    "CPU high": "medium",
+    "GPU high": "high",
+    "GPU very high": "very-high"
+  }[hint.level] || "medium";
+
   resourceTitle.textContent = `Resource use: ${hint.title}`;
   resourceLevel.textContent = hint.level;
   resourceSummary.textContent = `${hint.summary} ${presetNote}`;
   resourceCPU.textContent = hint.cpu;
   resourceGPU.textContent = hint.gpu;
   resourceDisk.textContent = hint.disk;
+
+  const resourceHint = document.querySelector("#resourceHint");
+  if (resourceHint) resourceHint.dataset.level = levelKey;
 }
 
 function formatBytes(bytes) {
