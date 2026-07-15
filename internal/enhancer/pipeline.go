@@ -34,6 +34,9 @@ type aiJobPaths struct {
 	outputPath  string
 	framesDir   string
 	upscaledDir string
+	// frameExt is the intermediate frame extension without a leading dot (jpg or png).
+	// Fast/balanced presets use high-quality JPEG to cut disk I/O; best keeps lossless PNG.
+	frameExt string
 }
 
 func (s *Server) runJob(ctx context.Context, id string) {
@@ -196,6 +199,7 @@ func fastCommandArgs(ctx context.Context, ffmpegPath string, job pipelineJob, ou
 		"-y",
 		"-hide_banner",
 		"-nostats",
+		"-threads", "0",
 		"-i", job.inputPath,
 		"-map", "0:v:0",
 		"-map", "0:a?",
@@ -231,11 +235,11 @@ func (s *Server) runAI(ctx context.Context, id string) error {
 		return fmt.Errorf("could not inspect input video: %w", err)
 	}
 
-	if err := s.extractFrames(ctx, id, tools.FFmpeg, paths.framesDir, paths.inputPath, probe); err != nil {
+	if err := s.extractFrames(ctx, id, tools.FFmpeg, paths, probe); err != nil {
 		return err
 	}
 
-	frameCount := countPNG(paths.framesDir)
+	frameCount := countFrames(paths.framesDir, paths.frameExt)
 	if frameCount == 0 {
 		return fmt.Errorf("no frames were extracted from the input video")
 	}
@@ -244,7 +248,7 @@ func (s *Server) runAI(ctx context.Context, id string) error {
 		return err
 	}
 
-	if done := countPNG(paths.upscaledDir); done == 0 {
+	if done := countFrames(paths.upscaledDir, paths.frameExt); done == 0 {
 		return fmt.Errorf("AI upscaler produced no output frames")
 	}
 
@@ -289,6 +293,7 @@ func (s *Server) prepareAIPaths(id string, job pipelineJob) (aiJobPaths, error) 
 		outputPath:  absOrOriginal(outputPath),
 		framesDir:   absOrOriginal(filepath.Join(job.workDir, "frames")),
 		upscaledDir: absOrOriginal(filepath.Join(job.workDir, "upscaled")),
+		frameExt:    intermediateFrameExt(job.preset),
 	}
 
 	if err := os.MkdirAll(paths.framesDir, 0o755); err != nil {
@@ -302,31 +307,54 @@ func (s *Server) prepareAIPaths(id string, job pipelineJob) (aiJobPaths, error) 
 	return paths, nil
 }
 
+// intermediateFrameExt chooses AI intermediate still format by preset.
+// JPEG (fast/balanced) cuts temp disk use and decode I/O vs PNG; best keeps lossless PNG.
+func intermediateFrameExt(preset string) string {
+	if preset == "best" {
+		return "png"
+	}
+	return "jpg"
+}
+
+func framePattern(dir, ext string) string {
+	return filepath.Join(dir, "%08d."+ext)
+}
+
+func extractFrameArgs(inputPath, framesDir, frameExt string) []string {
+	args := []string{
+		"-y",
+		"-hide_banner",
+		"-nostats",
+		"-threads", "0",
+		"-i", inputPath,
+		"-fps_mode", "passthrough",
+		"-an",
+		"-sn",
+		"-dn",
+	}
+	// High-quality JPEG stills are far smaller than PNG while remaining near-lossless at q=2.
+	if frameExt == "jpg" {
+		args = append(args, "-q:v", "2")
+	}
+	args = append(args, "-progress", "pipe:1", framePattern(framesDir, frameExt))
+	return args
+}
+
 func (s *Server) extractFrames(
 	ctx context.Context,
 	id string,
 	ffmpegPath string,
-	framesDir string,
-	inputPath string,
+	paths aiJobPaths,
 	probe videoProbe,
 ) error {
 	s.updateJob(id, func(job *Job) {
 		job.Stage = "Extracting frames"
 		job.Progress = 3
 	})
-	extractArgs := []string{
-		"-y",
-		"-hide_banner",
-		"-nostats",
-		"-i", inputPath,
-		"-fps_mode", "passthrough",
-		"-progress", "pipe:1",
-		filepath.Join(framesDir, "%08d.png"),
-	}
 
 	return runCommand(ctx, commandHooks{
 		Line: s.ffmpegProgressHook(id, probe.DurationSec, 3, 17),
-	}, ffmpegPath, extractArgs...)
+	}, ffmpegPath, extractFrameArgs(paths.inputPath, paths.framesDir, paths.frameExt)...)
 }
 
 func (s *Server) upscaleFrames(
@@ -347,7 +375,7 @@ func (s *Server) upscaleFrames(
 	aiCmd := exec.CommandContext(ctx, binPath, realESRGANArgs(paths, preset, options)...)
 	aiCmd.Dir = filepath.Dir(binPath)
 
-	counter := newPNGCounter(paths.upscaledDir)
+	counter := newFrameCounter(paths.upscaledDir, paths.frameExt)
 	return runPreparedCommand(ctx, commandHooks{
 		Line: func(line string) {
 			s.appendLog(id, line)
@@ -364,19 +392,24 @@ func (s *Server) upscaleFrames(
 }
 
 func realESRGANArgs(paths aiJobPaths, preset string, options aiOptions) []string {
+	frameExt := paths.frameExt
+	if frameExt == "" {
+		frameExt = intermediateFrameExt(preset)
+	}
+
 	args := []string{
 		"-i", paths.framesDir,
 		"-o", paths.upscaledDir,
 		"-n", options.model,
 		"-s", strconv.Itoa(options.scale),
-		"-f", "png",
+		"-f", frameExt,
 	}
 
 	if modelPath := strings.TrimSpace(os.Getenv("REALESRGAN_MODEL_PATH")); modelPath != "" {
 		args = append(args, "-m", absOrOriginal(modelPath))
 	}
 
-	args = append(args, "-j", realESRGANThreads(preset))
+	args = append(args, "-j", realESRGANThreads(preset, runtime.NumCPU()))
 
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("REALESRGAN_TTA")), "1") {
 		args = append(args, "-x")
@@ -385,12 +418,37 @@ func realESRGANArgs(paths aiJobPaths, preset string, options aiOptions) []string
 	return args
 }
 
-func realESRGANThreads(preset string) string {
-	if preset == "fast" {
-		return "2:2:2"
+// realESRGANThreads returns load:proc:save workers scaled to available CPUs.
+// Fast favors throughput; best stays conservative to limit peak memory/VRAM contention.
+func realESRGANThreads(preset string, numCPU int) string {
+	if numCPU < 1 {
+		numCPU = 1
 	}
 
-	return "1:2:2"
+	clamp := func(v, lo, hi int) int {
+		if v < lo {
+			return lo
+		}
+		if v > hi {
+			return hi
+		}
+		return v
+	}
+
+	switch preset {
+	case "fast":
+		load := clamp(numCPU/2, 2, 4)
+		proc := clamp(numCPU/2, 2, 4)
+		save := clamp(numCPU/3, 2, 4)
+		return fmt.Sprintf("%d:%d:%d", load, proc, save)
+	case "best":
+		return "1:2:2"
+	default: // balanced
+		load := clamp(numCPU/3, 1, 3)
+		proc := clamp(numCPU/3, 2, 3)
+		save := clamp(numCPU/4, 1, 2)
+		return fmt.Sprintf("%d:%d:%d", load, proc, save)
+	}
 }
 
 func (s *Server) updateAIProgress(id string, done int, frameCount int, currentPercent float64) {
@@ -416,6 +474,35 @@ func aiProgress(done int, frameCount int, currentPercent float64) float64 {
 	return 20 + math.Min(65, (completedFrames/float64(frameCount))*65)
 }
 
+func rebuildVideoArgs(ffmpegPath string, paths aiJobPaths, job pipelineJob, probe videoProbe, encodeArgs []string) []string {
+	frameExt := paths.frameExt
+	if frameExt == "" {
+		frameExt = intermediateFrameExt(job.preset)
+	}
+
+	// Even dimensions + yuv420p keep progressive H.264-compatible output after AI rebuild.
+	args := []string{
+		"-y",
+		"-hide_banner",
+		"-nostats",
+		"-threads", "0",
+		"-framerate", probe.FPSString,
+		"-i", framePattern(paths.upscaledDir, frameExt),
+		"-i", paths.inputPath,
+		"-map", "0:v:0",
+		"-map", "1:a?",
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+	}
+	args = append(args, encodeArgs...)
+	args = append(args, "-c:a", "copy", "-shortest")
+
+	if isFastStartFormat(job.format) {
+		args = append(args, "-movflags", "+faststart")
+	}
+
+	return append(args, "-progress", "pipe:1", paths.outputPath)
+}
+
 func (s *Server) rebuildVideo(
 	ctx context.Context,
 	id string,
@@ -428,24 +515,9 @@ func (s *Server) rebuildVideo(
 		job.Stage = "Rebuilding video"
 		job.Progress = 86
 	})
-	rebuildArgs := []string{
-		"-y",
-		"-hide_banner",
-		"-nostats",
-		"-framerate", probe.FPSString,
-		"-i", filepath.Join(paths.upscaledDir, "%08d.png"),
-		"-i", paths.inputPath,
-		"-map", "0:v:0",
-		"-map", "1:a?",
-	}
-	rebuildArgs = append(rebuildArgs, encoderArgs(ctx, ffmpegPath, job.preset)...)
-	rebuildArgs = append(rebuildArgs, "-c:a", "copy", "-shortest")
 
-	if isFastStartFormat(job.format) {
-		rebuildArgs = append(rebuildArgs, "-movflags", "+faststart")
-	}
-
-	rebuildArgs = append(rebuildArgs, "-progress", "pipe:1", paths.outputPath)
+	encodeArgs := encoderArgs(ctx, ffmpegPath, job.preset)
+	rebuildArgs := rebuildVideoArgs(ffmpegPath, paths, job, probe, encodeArgs)
 
 	return runCommand(ctx, commandHooks{
 		Line: s.ffmpegProgressHook(id, probe.DurationSec, 86, 12),
@@ -487,24 +559,31 @@ func isFastStartFormat(format string) bool {
 }
 
 func fastFilter(mode, preset string) string {
-	denoise := "1.2:1.2:4:4"
-	sharpen := "5:5:0.45:3:3:0.10"
+	// Leaner denoise/sharpen on fast; balanced keeps a light temporal denoise;
+	// best uses stronger spatial cleanup. Always force even geometry + yuv420p.
+	denoise := "1.0:1.0:3:3"
+	sharpen := "5:5:0.50:3:3:0.10"
+	eq := "eq=contrast=1.04:saturation=1.05:gamma=1.01"
 	switch preset {
 	case "fast":
-		denoise = "0.8:0.8:3:3"
-		sharpen = "5:5:0.35:3:3:0.0"
+		// Skip heavy temporal denoise; light unsharp + color lift only.
+		denoise = ""
+		sharpen = "5:5:0.40:3:3:0.0"
+		eq = "eq=contrast=1.03:saturation=1.04"
 	case "best":
-		denoise = "1.8:1.8:7:7"
-		sharpen = "7:7:0.75:5:5:0.15"
+		denoise = "1.6:1.6:6:6"
+		sharpen = "7:7:0.70:5:5:0.12"
+		eq = "eq=contrast=1.05:saturation=1.06:gamma=1.01"
 	}
 
-	parts := []string{
-		"hqdn3d=" + denoise,
-		"unsharp=" + sharpen,
-		"eq=contrast=1.03:saturation=1.04",
+	parts := make([]string, 0, 5)
+	if denoise != "" {
+		parts = append(parts, "hqdn3d="+denoise)
 	}
+	parts = append(parts, "unsharp="+sharpen, eq)
 	if mode == "fast-upscale" {
-		parts = append(parts, "scale=trunc(iw*2/2)*2:trunc(ih*2/2)*2:flags=lanczos")
+		// 2x Lanczos with accurate chroma for cleaner progressive H.264 output.
+		parts = append(parts, "scale=trunc(iw*2/2)*2:trunc(ih*2/2)*2:flags=lanczos+accurate_rnd+full_chroma_int")
 	} else {
 		parts = append(parts, "scale=trunc(iw/2)*2:trunc(ih/2)*2")
 	}
@@ -513,28 +592,40 @@ func fastFilter(mode, preset string) string {
 }
 
 func encoderArgs(ctx context.Context, ffmpegPath, preset string) []string {
+	// Prefer hardware H.264 on macOS when available; otherwise libx264 with auto threads.
 	if runtime.GOOS == "darwin" && encoderAvailable(ctx, ffmpegPath, "h264_videotoolbox") {
-		bitrate := "12M"
+		bitrate := "14M"
 		switch preset {
 		case "fast":
 			bitrate = "8M"
 		case "best":
-			bitrate = "24M"
+			bitrate = "28M"
 		}
-		return []string{"-c:v", "h264_videotoolbox", "-b:v", bitrate, "-tag:v", "avc1"}
+		return []string{
+			"-c:v", "h264_videotoolbox",
+			"-b:v", bitrate,
+			"-tag:v", "avc1",
+			"-pix_fmt", "yuv420p",
+		}
 	}
 
-	crf := "19"
+	crf := "18"
 	speed := "medium"
 	switch preset {
 	case "fast":
-		crf = "23"
+		crf = "22"
 		speed = "veryfast"
 	case "best":
-		crf = "16"
+		crf = "15"
 		speed = "slow"
 	}
-	return []string{"-c:v", "libx264", "-preset", speed, "-crf", crf, "-pix_fmt", "yuv420p"}
+	return []string{
+		"-c:v", "libx264",
+		"-preset", speed,
+		"-crf", crf,
+		"-pix_fmt", "yuv420p",
+		"-threads", "0",
+	}
 }
 
 var encoderAvailabilityCache sync.Map
@@ -565,27 +656,34 @@ func probeEncoderAvailable(ctx context.Context, ffmpegPath, encoder string) bool
 	return strings.Contains(string(out), encoder)
 }
 
-type pngCounter struct {
+type frameCounter struct {
 	dir         string
+	ext         string
 	minRefresh  time.Duration
 	lastRefresh time.Time
 	count       int
 }
 
-func newPNGCounter(dir string) *pngCounter {
-	return &pngCounter{
+func newFrameCounter(dir, ext string) *frameCounter {
+	return &frameCounter{
 		dir:        dir,
+		ext:        ext,
 		minRefresh: 500 * time.Millisecond,
 	}
 }
 
-func (c *pngCounter) Count() int {
+// newPNGCounter is kept as a thin alias for tests that still pass a PNG-only dir.
+func newPNGCounter(dir string) *frameCounter {
+	return newFrameCounter(dir, "png")
+}
+
+func (c *frameCounter) Count() int {
 	return c.CountAt(time.Now())
 }
 
-func (c *pngCounter) CountAt(now time.Time) int {
+func (c *frameCounter) CountAt(now time.Time) int {
 	if c.lastRefresh.IsZero() || now.Sub(c.lastRefresh) >= c.minRefresh {
-		c.count = countPNG(c.dir)
+		c.count = countFrames(c.dir, c.ext)
 		c.lastRefresh = now
 	}
 
@@ -593,13 +691,24 @@ func (c *pngCounter) CountAt(now time.Time) int {
 }
 
 func countPNG(dir string) int {
+	return countFrames(dir, "png")
+}
+
+func countFrames(dir, ext string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
+	wantExt := "." + strings.TrimPrefix(strings.ToLower(ext), ".")
+	if wantExt == "." {
+		wantExt = ".png"
+	}
 	count := 0
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), wantExt) {
 			count++
 		}
 	}

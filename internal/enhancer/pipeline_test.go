@@ -206,9 +206,11 @@ func TestRealESRGANArgs(t *testing.T) {
 	t.Setenv("REALESRGAN_MODEL_PATH", "")
 	t.Setenv("REALESRGAN_TTA", "")
 
+	// Fast/balanced use JPEG intermediates; path.frameExt must wire into -f.
 	paths := aiJobPaths{
 		framesDir:   "/tmp/frames",
 		upscaledDir: "/tmp/upscaled",
+		frameExt:    "jpg",
 	}
 	args := realESRGANArgs(paths, "fast", aiOptions{scale: 4, model: "realesrgan-x4plus"})
 
@@ -221,12 +223,227 @@ func TestRealESRGANArgs(t *testing.T) {
 		"realesrgan-x4plus",
 		"-s",
 		"4",
+		"-f",
+		"jpg",
 		"-j",
-		"2:2:2",
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("args = %v, missing %q", args, want)
 		}
+	}
+
+	// Thread string is present and non-empty (scaled by CPU at call time).
+	jIdx := slices.Index(args, "-j")
+	if jIdx < 0 || jIdx+1 >= len(args) || args[jIdx+1] == "" {
+		t.Fatalf("args = %v, expected non-empty -j thread string", args)
+	}
+
+	// Best keeps PNG for quality.
+	bestPaths := aiJobPaths{framesDir: "/tmp/f", upscaledDir: "/tmp/u", frameExt: "png"}
+	bestArgs := realESRGANArgs(bestPaths, "best", aiOptions{scale: 2, model: "realesrgan-x4plus"})
+	if !slices.Contains(bestArgs, "png") {
+		t.Fatalf("best args = %v, want png output format", bestArgs)
+	}
+}
+
+func TestIntermediateFrameExt(t *testing.T) {
+	t.Parallel()
+
+	if got := intermediateFrameExt("fast"); got != "jpg" {
+		t.Fatalf("fast ext = %q, want jpg", got)
+	}
+	if got := intermediateFrameExt("balanced"); got != "jpg" {
+		t.Fatalf("balanced ext = %q, want jpg", got)
+	}
+	if got := intermediateFrameExt("best"); got != "png" {
+		t.Fatalf("best ext = %q, want png", got)
+	}
+}
+
+func TestRealESRGANThreads(t *testing.T) {
+	t.Parallel()
+
+	// Known CPU counts: assert shape load:proc:save and relative aggressiveness.
+	// 8 CPUs → load=4, proc=4, save=2
+	if got := realESRGANThreads("fast", 8); got != "4:4:2" {
+		t.Fatalf("fast threads(8) = %q, want 4:4:2", got)
+	}
+	if got := realESRGANThreads("best", 16); got != "1:2:2" {
+		t.Fatalf("best threads = %q, want conservative 1:2:2", got)
+	}
+	// balanced on 8: load=2, proc=2, save=2
+	if got := realESRGANThreads("balanced", 8); got != "2:2:2" {
+		t.Fatalf("balanced threads(8) = %q, want 2:2:2", got)
+	}
+	// Single-core still returns a valid triple without panicking.
+	single := realESRGANThreads("fast", 1)
+	if strings.Count(single, ":") != 2 {
+		t.Fatalf("single-cpu threads = %q, want load:proc:save", single)
+	}
+}
+
+func TestExtractFrameArgs(t *testing.T) {
+	t.Parallel()
+
+	jpgArgs := extractFrameArgs("/in.mp4", "/frames", "jpg")
+	joined := strings.Join(jpgArgs, " ")
+	if !strings.Contains(joined, "-q:v 2") {
+		t.Fatalf("jpg extract missing high-quality -q:v 2: %v", jpgArgs)
+	}
+	if !strings.Contains(joined, "%08d.jpg") {
+		t.Fatalf("jpg extract pattern missing: %v", jpgArgs)
+	}
+	if !slices.Contains(jpgArgs, "-threads") || !slices.Contains(jpgArgs, "0") {
+		t.Fatalf("extract should auto-thread: %v", jpgArgs)
+	}
+	if !slices.Contains(jpgArgs, "-an") {
+		t.Fatalf("extract should drop audio/subtitles to save I/O: %v", jpgArgs)
+	}
+
+	pngArgs := extractFrameArgs("/in.mp4", "/frames", "png")
+	pngJoined := strings.Join(pngArgs, " ")
+	if strings.Contains(pngJoined, "-q:v") {
+		t.Fatalf("png extract must not set jpeg quality: %v", pngArgs)
+	}
+	if !strings.Contains(pngJoined, "%08d.png") {
+		t.Fatalf("png extract pattern missing: %v", pngArgs)
+	}
+}
+
+func TestFastFilterQualityInvariants(t *testing.T) {
+	t.Parallel()
+
+	modes := []string{"fast", "fast-upscale"}
+	presets := []string{"fast", "balanced", "best"}
+
+	for _, mode := range modes {
+		for _, preset := range presets {
+			filter := fastFilter(mode, preset)
+			if !strings.Contains(filter, "format=yuv420p") {
+				t.Fatalf("%s/%s filter missing yuv420p: %s", mode, preset, filter)
+			}
+			if !strings.Contains(filter, "trunc(") {
+				t.Fatalf("%s/%s filter missing even-dimension scale: %s", mode, preset, filter)
+			}
+			if mode == "fast-upscale" {
+				if !strings.Contains(filter, "lanczos") {
+					t.Fatalf("upscale filter must use lanczos: %s", filter)
+				}
+				if !strings.Contains(filter, "iw*2") {
+					t.Fatalf("upscale filter must 2x: %s", filter)
+				}
+			}
+			// Fast skips hqdn3d for lower CPU; balanced/best include it.
+			if preset == "fast" && strings.Contains(filter, "hqdn3d") {
+				t.Fatalf("fast preset should skip heavy denoise: %s", filter)
+			}
+			if preset != "fast" && !strings.Contains(filter, "hqdn3d") {
+				t.Fatalf("%s preset should denoise: %s", preset, filter)
+			}
+		}
+	}
+}
+
+func TestEncoderArgsQualityInvariants(t *testing.T) {
+	// Not parallel: encoderAvailable may probe ffmpeg and uses a process-wide cache.
+	args := encoderArgs(t.Context(), "", "balanced")
+	joined := strings.Join(args, " ")
+	// Without ffmpeg path, videotoolbox is unavailable → libx264 path.
+	if !slices.Contains(args, "libx264") {
+		t.Fatalf("encoder without ffmpeg should fall back to libx264: %v", args)
+	}
+	if !slices.Contains(args, "yuv420p") {
+		t.Fatalf("encoder must force yuv420p: %v", args)
+	}
+	if !strings.Contains(joined, "-crf") {
+		t.Fatalf("libx264 path must set crf: %v", args)
+	}
+	if !slices.Contains(args, "-threads") {
+		t.Fatalf("libx264 should enable auto threads: %v", args)
+	}
+
+	fast := encoderArgs(t.Context(), "", "fast")
+	best := encoderArgs(t.Context(), "", "best")
+	// Lower CRF number = higher quality; best must be stricter than fast.
+	fastCRF := crfFromArgs(fast)
+	bestCRF := crfFromArgs(best)
+	if bestCRF >= fastCRF {
+		t.Fatalf("best crf %v should be lower (higher quality) than fast crf %v", bestCRF, fastCRF)
+	}
+}
+
+func crfFromArgs(args []string) float64 {
+	for i, a := range args {
+		if a == "-crf" && i+1 < len(args) {
+			return parseFloat(args[i+1])
+		}
+	}
+	return -1
+}
+
+func TestRebuildVideoArgs(t *testing.T) {
+	t.Parallel()
+
+	paths := aiJobPaths{
+		inputPath:   "/in.mp4",
+		outputPath:  "/out.mp4",
+		upscaledDir: "/upscaled",
+		frameExt:    "jpg",
+	}
+	job := pipelineJob{preset: "balanced", format: "mp4"}
+	probe := videoProbe{FPSString: "30/1"}
+	encodeArgs := []string{"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"}
+
+	args := rebuildVideoArgs("ffmpeg", paths, job, probe, encodeArgs)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "%08d.jpg") {
+		t.Fatalf("rebuild must read jpg frames: %v", args)
+	}
+	if !slices.Contains(args, "0:v:0") || !slices.Contains(args, "1:a?") {
+		t.Fatalf("rebuild must map video + optional audio: %v", args)
+	}
+	if !strings.Contains(joined, "format=yuv420p") {
+		t.Fatalf("rebuild must enforce yuv420p: %v", args)
+	}
+	if !strings.Contains(joined, "trunc(iw/2)*2") {
+		t.Fatalf("rebuild must force even dimensions: %v", args)
+	}
+	if !slices.Contains(args, "+faststart") {
+		t.Fatalf("mp4 rebuild should use faststart: %v", args)
+	}
+	if !slices.Contains(args, "-shortest") {
+		t.Fatalf("rebuild should use -shortest with audio map: %v", args)
+	}
+}
+
+func TestFastCommandArgs(t *testing.T) {
+	// Not parallel: may touch encoder cache via encoderArgs.
+	job := pipelineJob{
+		inputPath: "/video.mp4",
+		mode:      "fast-upscale",
+		preset:    "balanced",
+		format:    "mp4",
+	}
+	args := fastCommandArgs(t.Context(), "", job, "/out.mp4")
+	joined := strings.Join(args, " ")
+
+	if !slices.Contains(args, "-threads") {
+		t.Fatalf("fast command should auto-thread: %v", args)
+	}
+	if !slices.Contains(args, "0:v:0") || !slices.Contains(args, "0:a?") {
+		t.Fatalf("fast command must map video + optional audio: %v", args)
+	}
+	vfIdx := slices.Index(args, "-vf")
+	if vfIdx < 0 || vfIdx+1 >= len(args) {
+		t.Fatalf("missing -vf: %v", args)
+	}
+	filter := args[vfIdx+1]
+	if !strings.Contains(filter, "lanczos") || !strings.Contains(filter, "yuv420p") {
+		t.Fatalf("filter = %q, want lanczos upscale + yuv420p", filter)
+	}
+	if !strings.Contains(joined, "+faststart") {
+		t.Fatalf("mp4 should use faststart: %v", args)
 	}
 }
 
@@ -244,6 +461,23 @@ func TestCountPNG(t *testing.T) {
 
 	if got := countPNG(dir); got != 2 {
 		t.Fatalf("countPNG() = %d, want 2", got)
+	}
+}
+
+func TestCountFrames(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "00000001.jpg"))
+	writeTestFile(t, filepath.Join(dir, "00000002.JPG"))
+	writeTestFile(t, filepath.Join(dir, "00000003.png"))
+	writeTestFile(t, filepath.Join(dir, "readme.txt"))
+
+	if got := countFrames(dir, "jpg"); got != 2 {
+		t.Fatalf("countFrames(jpg) = %d, want 2", got)
+	}
+	if got := countFrames(dir, "png"); got != 1 {
+		t.Fatalf("countFrames(png) = %d, want 1", got)
 	}
 }
 
@@ -268,6 +502,17 @@ func TestPNGCounterCachesWithinRefreshWindow(t *testing.T) {
 
 	if got := counter.CountAt(start.Add(time.Hour)); got != 2 {
 		t.Fatalf("refreshed CountAt() = %d, want 2", got)
+	}
+}
+
+func TestFrameCounterCountsJPEG(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "00000001.jpg"))
+	counter := newFrameCounter(dir, "jpg")
+	if got := counter.CountAt(time.Unix(1, 0)); got != 1 {
+		t.Fatalf("jpeg CountAt() = %d, want 1", got)
 	}
 }
 
