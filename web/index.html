@@ -3,23 +3,27 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Video Enhance</title>
+    <title>VIDEO.ENHANCE // local terminal</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <div class="crt-overlay" aria-hidden="true"></div>
+    <div class="grid-bg" aria-hidden="true"></div>
+
     <header class="app-header">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24">
-            <rect x="3" y="5" width="18" height="14" rx="3"/>
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
             <path d="M10 9.5v5l4.5-2.5Z"/>
-            <path d="M17 4.5 18.2 3"/>
-            <path d="M19.5 6.2 21 5"/>
+            <path d="M7 19h10"/>
+            <path d="M9 3v2M15 3v2"/>
           </svg>
         </div>
         <div>
-          <h1>Video Enhance</h1>
-          <p class="subtitle">Local cleanup &amp; AI upscaling</p>
+          <p class="eyebrow brand-tag">SYS // LOCAL NODE</p>
+          <h1>VIDEO<span class="title-accent">.ENHANCE</span></h1>
+          <p class="subtitle">cleanup · upscale · encode <span class="cursor-blink">_</span></p>
         </div>
       </div>
       <div class="status-strip" id="statusStrip" aria-live="polite"></div>
@@ -29,9 +33,9 @@
       <section class="panel control-panel" aria-labelledby="newJobTitle">
         <div class="panel-head">
           <div>
-            <p class="eyebrow">Create</p>
+            <p class="eyebrow">// module.create</p>
             <h2 id="newJobTitle">New Job</h2>
-            <p>Choose source, mode, and output.</p>
+            <p>Select source stream, pipeline mode, and sink.</p>
           </div>
           <button class="icon-button" id="refreshHealth" type="button" aria-label="Refresh tool status" title="Refresh tool status">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -52,8 +56,8 @@
               </svg>
             </span>
             <span class="drop-copy">
-              <span class="drop-title" id="fileTitle">Drop a video here</span>
-              <span class="drop-meta" id="fileMeta">or click to browse - MP4, MOV, MKV, WebM</span>
+              <span class="drop-title" id="fileTitle">DROP VIDEO STREAM</span>
+              <span class="drop-meta" id="fileMeta">click to browse · MP4 / MOV / MKV / WEBM</span>
             </span>
           </label>
 
@@ -158,20 +162,20 @@
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m8 5 11 7-11 7Z"/>
               </svg>
-              Start enhance
+              Execute
             </button>
             <button class="secondary-button" id="cancelButton" type="button" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 6h12v12H6z"/>
               </svg>
-              Cancel
+              Abort
             </button>
           </div>
         </form>
 
         <div class="tools-block">
           <div class="tools-head">
-            <span class="eyebrow">Local tools</span>
+            <span class="eyebrow">// toolchain.status</span>
           </div>
           <div class="tool-list" id="toolList" aria-label="Tool status"></div>
         </div>
@@ -181,7 +185,7 @@
         <section class="panel progress-panel" aria-labelledby="progressTitle">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Live</p>
+              <p class="eyebrow">// runtime.live</p>
               <h2 id="progressTitle">Current Job</h2>
               <p id="currentJobMeta">No job running</p>
             </div>
@@ -197,7 +201,7 @@
 
           <div class="progress-block">
             <div class="progress-info">
-              <span id="stageText">Idle</span>
+              <span id="stageText">IDLE</span>
               <span class="progress-pct" id="progressText">0%</span>
             </div>
             <div class="progress-track" aria-hidden="true">
@@ -206,7 +210,7 @@
           </div>
 
           <div class="job-output">
-            <span class="label">Output</span>
+            <span class="label">Output path</span>
             <code id="outputPath">-</code>
           </div>
         </section>
@@ -214,7 +218,7 @@
         <section class="panel jobs-panel" aria-labelledby="jobsTitle">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Queue</p>
+              <p class="eyebrow">// queue</p>
               <h2 id="jobsTitle">Jobs</h2>
               <p id="jobCount">0 total</p>
             </div>
@@ -225,7 +229,7 @@
         <section class="panel log-panel" aria-labelledby="logTitle">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Diagnostics</p>
+              <p class="eyebrow">// console.out</p>
               <h2 id="logTitle">Log</h2>
               <p id="logMeta">No output</p>
             </div>

@@ -112,8 +112,8 @@ updateResourceHint();
 function updateSelectedFile() {
   const file = videoInput.files?.[0];
   if (!file) {
-    fileTitle.textContent = "Drop a video here";
-    fileMeta.textContent = "or click to browse - MP4, MOV, MKV, WebM";
+    fileTitle.textContent = "DROP VIDEO STREAM";
+    fileMeta.textContent = "click to browse · MP4 / MOV / MKV / WEBM";
     dropZone.classList.remove("has-file");
     return;
   }
@@ -301,9 +301,9 @@ function updateResourceHint() {
       title: "AI 2x",
       level: "GPU high",
       summary: "Extracts every frame, upscales through Real-ESRGAN on one Vulkan GPU, then rebuilds video.",
-      cpu: "Medium; frame extract/rebuild plus PNG I/O",
+      cpu: "Medium; frame extract/rebuild plus still I/O",
       gpu: "High; one Vulkan GPU by default",
-      disk: "High; temporary frames can use GBs"
+      disk: "High; temp stills (JPEG on fast/balanced, PNG on best)"
     },
     "ai-4x": {
       title: "AI 4x",
@@ -317,16 +317,16 @@ function updateResourceHint() {
       title: "Anime",
       level: "GPU high",
       summary: "AI 2x path with the anime model. Best for animation, cartoons, UI, and line art.",
-      cpu: "Medium; frame extract/rebuild plus PNG I/O",
+      cpu: "Medium; frame extract/rebuild plus still I/O",
       gpu: "High; one Vulkan GPU by default",
-      disk: "High; temporary frames can use GBs"
+      disk: "High; temp stills (JPEG on fast/balanced, PNG on best)"
     }
   };
   const hint = hints[mode] || hints.fast;
   const presetNote = {
-    fast: "Fast preset lowers quality pressure and finishes sooner.",
-    balanced: "Balanced preset is recommended for most local jobs.",
-    best: "Best increases quality settings. Real-ESRGAN TTA stays off unless REALESRGAN_TTA=1."
+    fast: "Fast preset favors speed: lighter filters, higher AI thread fan-out, JPEG intermediates.",
+    balanced: "Balanced is recommended: high-quality JPEG intermediates, solid encode quality.",
+    best: "Best keeps lossless PNG intermediates and stricter encode. Real-ESRGAN TTA stays off unless REALESRGAN_TTA=1."
   }[preset] || "";
 
   const levelKey = {

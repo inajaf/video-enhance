@@ -75,7 +75,7 @@ http://127.0.0.1:8787
 3. Choose a preset.
 4. Keep `MP4` unless you need another container.
 5. Leave the output folder as `outputs`, or enter a custom folder path.
-6. Click `Start`.
+6. Click `Execute`.
 7. Watch the current job progress and log.
 8. Click `Download` when the job finishes.
 
